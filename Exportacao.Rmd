@@ -1,0 +1,1146 @@
+---
+title: "Brasil"
+author: "Erick Amorim"
+date: "08/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+listofPackages = c("dplyr", "ggplot2", "gridExtra", "readxl", "tidyr", "knitr", "plotly","forecast", "lmtest")
+
+packages = function(listofPackages){
+  new.packages = listofPackages[!(listofPackages %in% 
+                                   installed.packages()[, "Package"])]
+  if (length(new.packages))
+    install.packages(new.packages, dependencies = TRUE)
+    #sapply(listofPackages, require, character.only = TRUE)
+}
+
+packages(listofPackages)
+lapply(listofPackages, library, character.only = TRUE)
+
+theme_update(plot.title = element_text(hjust = 0.5))
+
+#leitura dos dados
+dados = read.csv("dados/data_comexstat.csv")
+covariaveis = read_excel("dados/covariates.xlsx")
+
+# visualizando a estrutura dos dados
+str(dados)
+head(dados)
+
+# verificando a existencia de valores ausentes
+colSums(is.na(dados))
+
+```
+
+## Dados
+
+Nesta análise vamos considerar uma base de dados retirada da [Comexstat](http://comexstat.mdic.gov.br/pt/home). A base é uma fonte de dados de importações e exportações brasileiras mantidas pelo Governo. O conjunto de dados contém todos os rastreamentos de importações
+ e exportações mensais de uma variedade de produtos, como:
+soja, farelo de soja, óleo de soja, milho,
+trigo e açúcar, por cada Esdado e por rotas (áerea, marítima e 
+terrestre) de um país para outro.
+
+
+
+```{r, include=FALSE, echo=FALSE}
+
+dados$datas = dados$date
+# funcao separate do pacote tidyr
+dados = separate(dados, date, sep ="-", into = c("Ano","Mes","dia"))
+
+# observacoes unicas nas colunas Ano, types, product, state
+unique(dados$Ano)
+unique(dados$type)
+unique(dados$product)
+unique(dados$state)
+
+
+```
+
+### Evolução das exportações Brasileiras
+
+A série mostrada na figura abaixo, apresenta a evolução do total de exportação do Brasil dos produtos Soja, Óleo de sjoja, e Farelo de soja, por ano, ao longo do périodo de 1997 à 2019. Veja que a exportação de Soja ao longo dos anos aumenta bastante em relação às exportações de Farelo e Óleo de soja. No ano de 2019, houve uma exportação de mais de 20 bilhões de dolares da Soja, enquanto que para o Farelo de soja, essa exportação foi um pouco mais de 5 bilhões.
+
+
+
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+## serie anual
+teste =   dados%>%
+              filter(type == "Export" & (product=="soybeans"|product=="soybean_meal"|product=="soybean_oil") ) %>%
+              group_by(Ano,product)%>%
+              summarise(Total = sum(usd), Soja = sum(tons) )%>%
+              as.data.frame()
+
+teste$Ano = as.numeric(teste$Ano)
+teste$Total = teste$Total/1000000000
+names(teste)[2] = "Produtos"
+
+teste$Produtos = ifelse(teste$Produtos == "soybean_meal", "Farelo de soja",ifelse(teste$Produtos == "soybean_oil","Óleo de soja", "Soja"))
+
+serie_anual= teste %>%
+              ggplot(aes(x = Ano, y = Total))+
+              geom_line(aes(color = Produtos)) +
+              geom_point(aes(color = Produtos))+
+              ylab("Total por bilhão de dolar ")
+
+ggplotly(serie_anual)
+
+
+```
+
+A Figura abaixo, mostra a evolução do total de exportação mensal ao longo do período de 1997 à 2019. Veja que a série representando o total de expotações da Soja, apresenta um comportamento sazonal, variando bastante em determinados periodos. Pode-se observar, que nos périodos dos meses de outubro à meados de fevereiro, as exportações de soja diminutem. Uma possível explicação para esse isso, é que nestes meses ocorre o chamado período entressafra. Por isso, o total de exportações da soja dimiuem, nessa época, assim como de outro produtos derivados dela como o Óleo e o Farelo de soja.
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+teste1 = dados%>%
+  filter(type == "Export" & (product=="soybeans"|product=="soybean_meal"|product=="soybean_oil") ) %>%
+  group_by(Ano,Mes, product)%>%
+  summarise(Total = sum(usd), Soja = sum(tons),d = first(datas) )%>%
+  as.data.frame()
+
+teste1$Ano = as.numeric(teste1$Ano)
+teste1$Total = teste1$Total/1000000000
+names(teste1)[3] = "Produtos"
+
+teste1$Produtos = ifelse(teste1$Produtos == "soybean_meal", "Farelo de soja",ifelse(teste1$Produtos == "soybean_oil","Óleo de soja", "Soja"))
+
+serie_mensal = teste1 %>%
+          ggplot( aes(x = as.factor(d), y = Total, group=1,text=paste("Data:",as.factor(d),"Total:",Total)) )+
+          geom_line(aes(color = Produtos)) +
+          geom_point(aes(color = Produtos)) +
+          scale_x_discrete(breaks = unique(teste1$d)[seq(1, length(unique(teste1$d)),by=48)] )+
+          xlab("Data")+
+          ylab("Total por bilhão de dolar ")
+
+ggplotly(serie_mensal,tooltip = "text")
+
+```
+
+
+##Os produtos exportados que são mais importantes nos últimos anos.
+
+Na Tabela 1 podemos observar percentual do total de exporação de seis produtos brasileiros e seus respectivos valores de exportação (em bilhões de dólares - USD) e quantidades (em milhões de toneladas), no período de 2005 à 2019. Veja que os 3 três mais importantes produtos exportados pelo Brasil, nestes úlimos 5 anos, são a Soja, o Açúcar e o Farelo de soja. Além disso, veja que o milho, apesar de ser o quarto neste rank, apresenta a segunda maior quantidade (em milhões de toneladas) exportada pelo Brasil, ficando atrás Soja. As Figuras abaixos representam os percentuais e as quantidades.
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+## os 3 mais importantes produtos exportados pelo Brasil
+# nos ultimos 5 anos
+
+#str(dados)
+dados$Ano = as.numeric(dados$Ano)
+#str(dados)
+
+produtos = dados%>%
+              filter(type == "Export" & Ano > 2014 )%>%
+              group_by(product)%>%
+              summarise(Total = sum(usd), Quantidade = sum(tons) ) %>%
+              arrange(desc(Total))%>%
+              as.data.frame()
+
+produtos["Export"] = produtos$Total
+produtos$Total = ((produtos$Total/sum(produtos$Total))*100) 
+
+#produtos
+
+for (i in 1:nrow(produtos)) {
+  if(produtos$product[i]=="soybeans"){produtos$product[i]="Soja"}
+  if(produtos$product[i]=="soybean_meal"){produtos$product[i]="Farelo de soja"}
+  if(produtos$product[i]=="soybean_oil"){produtos$product[i]="Óleo de soja"}
+  if(produtos$product[i]=="sugar"){produtos$product[i]="Açúcar"}
+  if(produtos$product[i]=="corn"){produtos$product[i]="Milho"}
+  if(produtos$product[i]=="wheat"){produtos$product[i]="Trigo"}
+}
+
+prod_exp = produtos %>%
+                mutate(product = reorder(product, -Total)) %>% 
+                ggplot(aes(x = product, y = Total, text=paste("Produto:",product,"Percentual:",Total) ) ) +
+                geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+                xlab("Produto")+
+                ylab("Percentual")+
+  ggtitle("Percentual do total de exportação por produto, no périodo de 2015 à 2019")+
+  theme(plot.title = element_text(size=12))
+
+produtos$Total = round(produtos$Total,2)
+produtos$Quantidade = produtos$Quantidade/1000000
+produtos$Export = produtos$Export/1000000000
+names(produtos) = c("Produto", "Percentual de Exportação", "Quantidade", "Exportação (bilhões de USD)")
+
+produtos = produtos[,c(1,2,4,3)]
+
+knitr::kable(produtos, caption = "Tabela 1: Quantidade, valor da exportação e percentual de exportação de seis produtos brasileiros, no período de 2005 à 2019")
+
+
+
+
+```
+
+```{r,  include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplotly(prod_exp, tooltip = "text")
+
+```
+
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+prod_qtd =  produtos %>%
+                mutate(Produto = reorder(Produto, -Quantidade)) %>% 
+                ggplot(aes(x = Produto, y = Quantidade , text=paste("Produto:",Produto,"Quantidade:",Quantidade)) ) +
+                geom_col()+
+                xlab("Produto")+
+                ylab("Quantidade em milhão de tonelada")+
+  ggtitle("Quantidade total  exportada, em milhoes de toneladas, por produdo") +
+  theme(plot.title = element_text(size=12))
+                
+ggplotly(prod_qtd, tooltip = "text")           
+
+
+
+```
+
+## Rotas de exportação do milho nos últimos anos.
+
+Como nas análises acima vimos que o milho é o segundo maior produto exportado em quantidade (revela a Tabela anterior) nos últimos 5 anos. A principal rota que o Brasil utiliza para exportá-lo é a rota maritima. O gáfico abaixo apresenta os percentuais de cada rota usada pelo Brasil para exportação do milho nos últimos anos (período de 2015 à 2019). Veja que mais de 75% das exportações de milho do Brasil é feita por rota marítima, enquanto que via rota terrestre esse percentual é um pouco mais de 6%.
+
+```{r,  include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+## as principais rotas que o Brasil utiliza para exportar 
+# milho nos últimos anos
+
+rota_milho = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "corn")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_milho$Total = (rota_milho$Total/sum(rota_milho$Total))*100
+
+for (i in 1:nrow(rota_milho)) {
+  if(rota_milho$route[i] =="Sea"){rota_milho$route[i]="Marítima"}
+  if(rota_milho$route[i] =="Ground"){rota_milho$route[i]="Terrestre"}
+  if(rota_milho$route[i] =="Other"){rota_milho$route[i]="Outras"}
+  if(rota_milho$route[i] =="Air"){rota_milho$route[i]="Aérea"}
+  if(rota_milho$route[i] =="River"){rota_milho$route[i]="Fluvial"}
+}
+
+
+rotamilho = rota_milho %>%
+            mutate(route = reorder(route, -Total)) %>% 
+            ggplot(aes(x = route, y = Total, text=paste("Rota:",route,"Percentual:",Total) ) ) +
+            geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+            xlab("Rota")+
+            ylab("Percentual")+
+  ggtitle("Percentual de exportação de Milho por rota") +
+  theme(plot.title = element_text(size=12))
+
+ggplotly(rotamilho, tooltip = "text" )
+
+```
+
+### Rotas de exportação dos demais produtos
+
+Para aos demais produtos, todos apresentam a rota marítima como meio mais frequente para a exportação. Entretanto, pode-se observar, na Figura abaixo, que existe uma diferença em relação as demais rotas usadas para exporação. Por exemplo, para a exportação de Soja (primeiro painel) a rota mais frequente utilizada, depois da marítima, é a Fluvial, enquanto que para os demais produtos, as rotas mais frequentes usadas para exportação são de outros tipos.
+
+
+```{r,  include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=9}
+
+## as principais rotas que o Brasil utiliza para exportar 
+# soja nos últimos anos
+
+rota_soja = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "soybeans")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_soja$Total = (rota_soja$Total/sum(rota_soja$Total))*100
+
+for (i in 1:nrow(rota_soja)) {
+  if(rota_soja$route[i] =="Sea"){rota_soja$route[i]="Marítima"}
+  if(rota_soja$route[i] =="Ground"){rota_soja$route[i]="Terrestre"}
+  if(rota_soja$route[i] =="Other"){rota_soja$route[i]="Outras"}
+  if(rota_soja$route[i] =="Air"){rota_soja$route[i]="Aérea"}
+  if(rota_soja$route[i] =="River"){rota_soja$route[i]="Fluvial"}
+}
+
+
+rotasoja = rota_soja %>%
+                mutate(route = reorder(route, -Total)) %>% 
+                ggplot(aes(x = route, y =  Total,text=paste("Rota:",route,"Percentual:",Total)  )) +
+                geom_col()+
+                coord_cartesian(ylim = c(0,100))+
+                xlab("Rota")+
+                ylab("Percentual")+
+                ggtitle("Percentual de exportação de Soja por rota") +
+                theme(plot.title = element_text(size=11 ))
+ 
+#rotasoja
+             
+## as principais rotas que o Brasil utiliza para exportar 
+# acucar nos últimos anos
+
+rota_acucar = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "sugar")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_acucar$Total = (rota_acucar$Total/sum(rota_acucar$Total))*100
+
+for (i in 1:nrow(rota_acucar)) {
+  if(rota_acucar$route[i] =="Sea"){rota_acucar$route[i]="Marítima"}
+  if(rota_acucar$route[i] =="Ground"){rota_acucar$route[i]="Terrestre"}
+  if(rota_acucar$route[i] =="Other"){rota_acucar$route[i]="Outras"}
+  if(rota_acucar$route[i] =="Air"){rota_acucar$route[i]="Aérea"}
+  if(rota_acucar$route[i] =="River"){rota_acucar$route[i]="Fluvial"}
+}
+
+
+rotaacucar = rota_acucar %>%
+                  mutate(route = reorder(route, -Total)) %>% 
+                  ggplot(aes(x = route, y = Total, text=paste("Rota:",route,"Percentual:",Total) ) ) +
+                  geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+                  xlab("Rota")+
+                  ylab("Percentual")+
+                  ggtitle("Percentual de exportação de Açúcar por rota") +
+                  theme(plot.title = element_text(size=11 ))
+
+
+#rotaacucar
+
+## as principais rotas que o Brasil utiliza para exportar 
+# farelo de soja nos últimos anos
+
+rota_farelo = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "soybean_meal")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_farelo$Total = (rota_farelo$Total/sum(rota_farelo$Total))*100
+
+for (i in 1:nrow(rota_farelo)) {
+  if(rota_farelo$route[i] =="Sea"){rota_farelo$route[i]="Marítima"}
+  if(rota_farelo$route[i] =="Ground"){rota_farelo$route[i]="Terrestre"}
+  if(rota_farelo$route[i] =="Other"){rota_farelo$route[i]="Outras"}
+  if(rota_farelo$route[i] =="Air"){rota_farelo$route[i]="Aérea"}
+  if(rota_farelo$route[i] =="River"){rota_farelo$route[i]="Fluvial"}
+}
+
+
+
+rotafarelo = rota_farelo %>%
+              mutate(route = reorder(route, -Total)) %>% 
+              ggplot(aes(x = route, y = Total, text=paste("Rota:",route,"Percentual:",Total) )) +
+              geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+              xlab("Rota")+
+              ylab("Percentual")+
+  ggtitle("Percentual de exportação de Farelo de soja por rota") +
+  theme(plot.title = element_text(size=11 ))
+
+#rotafarelo
+
+## as principais rotas que o Brasil utiliza para exportar 
+# oleo de soja nos últimos anos
+
+rota_oleo = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "soybean_oil")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_oleo$Total = (rota_oleo$Total/sum(rota_oleo$Total))*100
+
+for (i in 1:nrow(rota_oleo)) {
+  if(rota_oleo$route[i] =="Sea"){rota_oleo$route[i]="Marítima"}
+  if(rota_oleo$route[i] =="Ground"){rota_oleo$route[i]="Terrestre"}
+  if(rota_oleo$route[i] =="Other"){rota_oleo$route[i]="Outras"}
+  if(rota_oleo$route[i] =="Air"){rota_oleo$route[i]="Aérea"}
+  if(rota_oleo$route[i] =="River"){rota_oleo$route[i]="Fluvial"}
+}
+
+
+                  
+rotaoleo =   rota_oleo %>%
+                    mutate(route = reorder(route, -Total)) %>% 
+                    ggplot(aes(x = route, y = Total,text=paste("Rota:",route,"Percentual:",Total) ) ) +
+                    geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+                    xlab("Rota")+
+                    ylab("Percentual")+
+  ggtitle("Percentual de exportação de Óleo de soja por rota") +
+  theme(plot.title = element_text(size=11 ))
+
+#rotaoleo
+
+## as principais rotas que o Brasil utiliza para exportar 
+# trigo nos últimos anos
+
+rota_trigo = dados %>%
+  filter(type == "Export" & Ano > 2014 & product == "wheat")%>%
+  group_by(route) %>%
+  summarise(Total = n()) %>%
+  arrange(desc(Total))%>%
+  as.data.frame()
+
+rota_trigo$Total = (rota_trigo$Total/sum(rota_trigo$Total))*100
+
+for (i in 1:nrow(rota_trigo)) {
+  if(rota_trigo$route[i] =="Sea"){rota_trigo$route[i]="Marítima"}
+  if(rota_trigo$route[i] =="Ground"){rota_trigo$route[i]="Terrestre"}
+  if(rota_trigo$route[i] =="Other"){rota_trigo$route[i]="Outras"}
+  if(rota_trigo$route[i] =="Air"){rota_trigo$route[i]="Aérea"}
+  if(rota_trigo$route[i] =="River"){rota_trigo$route[i]="Fluvial"}
+}
+
+rotatrigo = rota_trigo %>%
+                  mutate(route = reorder(route, -Total)) %>% 
+                  ggplot(aes(x = route, y = Total, Total,text=paste("Rota:",route,"Percentual:",Total) ) ) +
+                  geom_col()+
+  coord_cartesian(ylim = c(0,100))+
+                  xlab("Rota")+
+                  ylab("Percentual")+
+  ggtitle("Percentual de exportação de Trigo por rota") +
+  theme(plot.title = element_text(size=11 ))
+
+
+#rotatrigo
+grid.arrange(rotasoja, rotaacucar, rotafarelo, rotatrigo, rotaoleo, ncol =2)
+```
+
+## Principais parceiros comerciais em relação à exportação de Milho e/ou Açúcar
+
+Nos últimos 3 anos (2017 à 2019), os países que mais comprarm os produtos milho e açucar foram Irã, Bangladesh e Argélia. Na Figura abaixo, podemos observar três gráficos do percentual do total de exportações de Milho e Açúcar, Milho, e somente Açúcar, respectivamente. Cada gráfico mostra os 10 mais importantes parceiros comerciais do Brasil em relação a exportação desses produtos. Pode-se observar no primeiro painel (à esquerna), que Irã, Bangladesh e Argélia são os parceiro comerciais mais importantes, em relação a exportação de milho e açúcar, para o Brasil. Se avaliarmos apenas a exportação de milho, no painel do meio, os 3 países mais importantes são Irã, Japão e Vietnã. Já em relação a exportação apenas do Açúcar (painel a direita), os três mais importantes países parceiros comerciais do Brasil são Argélia, Bangladesh e Índia.
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE,fig.width=13, fig.height=6.5}
+
+## os países que foram os parceceiros comerciais mais 
+# importantes do Brasil em relação a exportação de "milho" e "açúcar"
+# nos últimos 3 anos
+
+#somente para o milho, o total de exportacoe de milho por pais
+paises1 = dados%>%
+  filter(type == "Export" & Ano > 2016 & product== "corn" )%>%
+  group_by(country,product)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(10)%>%
+  as.data.frame()
+
+#paises1
+
+paises1$Total = (paises1$Total/sum(paises1$Total))*100
+paises1 = paises1%>%head(10)
+#grafico para o total de exportacoe do milho por pais
+paises_milho = paises1%>%
+                    mutate(country = reorder(country, Total)) %>% 
+                    ggplot(aes(x = country, y = Total)) +
+                    geom_col()+
+                    coord_flip()+
+                    ylab("Percentual")+
+                    xlab("Países")+
+  ggtitle("Total de exportações de milho por país") +
+  theme(plot.title = element_text(size=12 ))
+
+
+#somente para o acucar, o total de exportacoe do acucar por pais
+paises2 = dados%>%
+  filter(type == "Export" & Ano > 2016 & product== "sugar" )%>%
+  group_by(country,product)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+#  head(10)%>%
+  as.data.frame()
+
+#paises2
+
+paises2$Total=(paises2$Total/sum(paises2$Total) )*100
+paises2 = paises2%>%head(10)
+#grafico para o total de exportacoe do acucar por pais
+paises_acuca = paises2%>%
+                mutate(country = reorder(country, Total)) %>% 
+                ggplot(aes(x = country, y = Total)) +
+                geom_col()+
+  coord_cartesian(ylim = c(0,20))+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Países")+
+  ggtitle("Total de exportacoes de açúcar por país") +
+  theme(plot.title = element_text(size=12 ))
+
+
+##
+#para o total de exportacoes do milho + total de exportacoes do acucar
+#
+paises3 = dados%>%
+  filter(type == "Export" & Ano > 2016 & (product== "sugar"|product== "corn") )%>%
+  group_by(country)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+ # head(10)%>%
+  as.data.frame()
+
+#paises3
+
+paises3$Total = (paises3$Total/sum(paises3$Total))*100
+paises3 = paises3%>%head(10)
+#grafico o total de exportacoes do milho + total de exportacoes do acucar
+
+paises_milho_acucar = paises3%>%
+                        mutate(country = reorder(country, Total)) %>% 
+                        ggplot(aes(x = country, y = Total)) +
+                        geom_col()+
+  coord_cartesian(ylim = c(0,25))+
+                        coord_flip()+
+                        ylab("Percentual")+
+                        xlab("Países")+
+  ggtitle("Total de exportacoes de milho e açúcar por país") +
+  theme(plot.title = element_text(size=12))
+        
+
+grid.arrange(paises_milho_acucar, paises_milho, paises_acuca, ncol =3)
+
+```
+ 
+## Os estados brasileiros mais importantes em relação às importações de cada produto
+
+A Figura abaixo apresenta os 5 mais importantes estados brasileiros que mais exportaram, cada um dos produtos, durante o período em análise. Veja que os estados do Mato Grosso, Paraná, Rio Grande do Sul e Goiás, são respectivamente os maiores exportadores de Soja e Farelo de soja do Brasil. Estes estados juntos são responáveis por mais de 70% de toda a exportação de soja do país. Na Tabela a, apresentada abaixo, podemos observar os percentuais individualmente. Em relação a exportação de Óleo de soja, observa-se que Paraná, Rio Grande do Sul e Mato Grosso, nesta ordem, são os três maiores exportadores do Brasil. Ao avaliar os 5 maiores exportadores de Açúcar do Brasil, destacamos o estado de São Paulo que é responsável por 67,52% de toda exportação do país. E o estado do Rio Grande do Sul se destacando como o maior exportador de Trigo do Brasil, sendo responsável por 88% da exportação de todo o país. Os percentuais dos demais estados podem ser vistos nas Tabelas 3 e 4.
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+# soja
+
+estado_soja = dados %>%
+                filter(type == "Export" & product== "soybeans" )%>%
+                group_by(state)%>%
+                summarise(Total = sum(usd))%>%
+                arrange(desc(Total))%>%
+                #head(5)%>%
+                as.data.frame()
+
+#estado_soja
+
+estado_soja$Total = (estado_soja$Total/sum(estado_soja$Total) )*100
+
+estado_soja = estado_soja %>% head(5)
+
+UFsoja =   estado_soja %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+   ggtitle("Maiores exportadores de Soja") +
+  theme(plot.title = element_text(size=13))
+
+#ggplotly(UFsoja)
+
+names(estado_soja) = c("Estado", "Percentual de Exportação")
+
+# Tabela que mostra os 5 maiores estados exportadores de soja
+knitr::kable(estado_soja, caption = "Tabela 2: Percentual dos cinco maiores exportadores de Soja do Brasil", digits = 2)
+
+
+```
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+estado_soja2019 = dados %>%
+                    filter(type == "Export" & Ano==2019 & product== "soybeans" )%>%
+                    group_by(state)%>%
+                    summarise(Total = sum(usd))%>%
+                    arrange(desc(Total))%>%
+                    #head(5)%>%
+                    as.data.frame()
+
+#estado_soja2019
+
+estado_soja2019$Total = (estado_soja2019$Total/sum(estado_soja2019$Total))*100
+
+estado_soja2019 = estado_soja2019 %>% head(5)
+
+UFsoja2019 = estado_soja2019 %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+  ggtitle("Maiores exportadores de Soja em 2019")+
+  theme(plot.title = element_text(size=13))
+              
+#UFsoja2019
+
+```
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+#acucar
+
+estado_acuc = dados %>%
+  filter(type == "Export" & product== "sugar" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_acuc
+
+estado_acuc$Total = (estado_acuc$Total/sum(estado_acuc$Total) )*100
+
+estado_acuc = estado_acuc%>% head(5)
+
+UFacuc =  estado_acuc %>%
+              mutate(state = reorder(state, Total)) %>% 
+              ggplot(aes(x = state, y = Total)) +
+              geom_col()+
+              coord_flip()+
+              ylab("Percentual")+
+              xlab("Estados")+
+  ggtitle("Maiores exportadores de Açúcar") +
+  theme(plot.title = element_text(size=13))
+
+#UFacuc
+
+names(estado_acuc) = c("Estado", "Percentual de Exportação")
+#Tabela que mostra os 5 maiores estados exportadores de acucar
+knitr::kable(estado_acuc, caption = "Tabela 3: Percentual dos cinco maiores exportadores de Açúcar do Brasil", digits = 2)
+
+estado_acuc2019 = dados %>%
+  filter(type == "Export" & Ano==2019 & product== "sugar" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_acuc2019
+
+estado_acuc2019$Total = (estado_acuc2019$Total/sum(estado_acuc2019$Total))*100
+
+estado_acuc2019 = estado_acuc2019%>% head(5)
+
+UFacuc2019 = estado_acuc2019 %>%
+                  mutate(state = reorder(state, Total)) %>% 
+                  ggplot(aes(x = state, y = Total)) +
+                  geom_col()+
+                  coord_flip()+
+                  ylab("Percentual")+
+                  xlab("Estados")+
+  ggtitle("Maiores exportadores de Açúcar em 2019")+
+  theme(plot.title = element_text(size=13))
+
+#UFacuc2019
+
+
+# oleo de soja
+
+estado_oleo = dados %>%
+  filter(type == "Export" & product== "soybean_oil" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_oleo
+
+estado_oleo$Total = (estado_oleo$Total/sum(estado_oleo$Total) )*100
+
+estado_oleo = estado_oleo%>% head(5)
+
+UFoleo =  estado_oleo %>%
+              mutate(state = reorder(state, Total)) %>% 
+              ggplot(aes(x = state, y = Total)) +
+              geom_col()+
+              coord_flip()+
+              ylab("Percentual")+
+              xlab("Estados")+
+               ggtitle("Maiores exportadores de Óleo de soja")+
+  theme(plot.title = element_text(size=13))
+
+#UFoleo
+
+estado_oleo2019 = dados %>%
+  filter(type == "Export" & Ano==2019 & product== "soybean_oil" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_oleo2019
+
+estado_oleo2019$Total = (estado_oleo2019$Total/sum(estado_oleo2019$Total))*100
+
+estado_oleo2019 = estado_oleo2019%>% head(5)
+
+UFoleo2019 =  estado_oleo2019 %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+  ggtitle("Maiores exportadores de Óleo de soja em 2019") +
+  theme(plot.title = element_text(size=13))
+
+#UFoleo2019
+
+
+#Farelo de soja
+
+estado_farelo = dados %>%
+  filter(type == "Export" & product== "soybean_meal" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_farelo
+
+estado_farelo$Total = (estado_farelo$Total/sum(estado_farelo$Total) )*100
+
+estado_farelo = estado_farelo%>% head(5)
+
+UFfarelo =  estado_farelo %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+                  ggtitle("Maiores exportadores de Farelo de soja")+
+  theme(plot.title = element_text(size=13))
+
+#UFfarelo
+
+estado_farelo2019 = dados %>%
+  filter(type == "Export" & Ano==2019 & product== "soybean_meal" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_farelo2019
+
+estado_farelo2019$Total = (estado_farelo2019$Total/sum(estado_farelo2019$Total))*100
+
+estado_farelo2019 = estado_farelo2019 %>% head(5)
+
+UFfarelo2019 = estado_farelo2019 %>%
+                  mutate(state = reorder(state, Total)) %>% 
+                  ggplot(aes(x = state, y = Total)) +
+                  geom_col()+
+                  coord_flip()+
+                  ylab("Percentual")+
+                  xlab("Estados")+
+    ggtitle("Maiores exportadores de Farelo de soja em 2019")+
+  theme(plot.title = element_text(size=13))
+
+#UFfarelo2019
+
+
+# Milho
+
+estado_milho = dados %>%
+  filter(type == "Export" & product== "corn" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_milho
+
+estado_milho$Total = (estado_milho$Total/sum(estado_milho$Total) )*100
+
+estado_milho = estado_milho%>% head(5)
+
+UFmilho = estado_milho %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+                ggtitle("Maiores exportadores de Milho")+
+  theme(plot.title = element_text(size=13))
+
+#UFmilho
+
+estado_milho2019 = dados %>%
+  filter(type == "Export" & Ano==2019 & product== "corn" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_milho2019
+
+estado_milho2019$Total = (estado_milho2019$Total/sum(estado_milho2019$Total))*100
+
+estado_milho2019 = estado_milho2019%>% head(5)
+
+UFmilho2019 = estado_milho2019 %>%
+                  mutate(state = reorder(state, Total)) %>% 
+                  ggplot(aes(x = state, y = Total)) +
+                  geom_col()+
+                  coord_flip()+
+                  ylab("Percentual")+
+                  xlab("Estados")+
+                  ggtitle("Maiores exportadores de Milho em 2019")+
+  theme(plot.title = element_text(size=13))
+                
+#UFmilho2019
+
+#Trigo
+
+estado_trigo = dados %>%
+  filter(type == "Export" & product== "wheat" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_trigo
+
+estado_trigo$Total = (estado_trigo$Total/sum(estado_trigo$Total) )*100
+
+estado_trigo = estado_trigo%>% head(5)
+
+UFtrigo = estado_trigo %>%
+            mutate(state = reorder(state, Total)) %>% 
+            ggplot(aes(x = state, y = Total)) +
+            geom_col()+
+            coord_flip()+
+            ylab("Percentual")+
+            xlab("Estados")+
+            ggtitle("Maiores exportadores de Trigo")+
+  theme(plot.title = element_text(size=13))
+
+#UFtrigo
+
+estado_trigo2019 = dados %>%
+  filter(type == "Export" & Ano==2019 & product== "wheat" )%>%
+  group_by(state)%>%
+  summarise(Total = sum(usd))%>%
+  arrange(desc(Total))%>%
+  #head(5)%>%
+  as.data.frame()
+
+#estado_trigo2019
+
+estado_trigo2019$Total = (estado_trigo2019$Total/sum(estado_trigo2019$Total))*100
+
+estado_trigo2019 = estado_trigo2019%>% head(5)
+
+knitr::kable(estado_trigo, caption = "Tabela 4: Percentual dos cinco maiores exportadores de Trigo do Brasil", digits = 2, col.names = c("Estado","Percentual de Exportação"))
+
+UFtrigo2019 =  estado_trigo2019 %>%
+                mutate(state = reorder(state, Total)) %>% 
+                ggplot(aes(x = state, y = Total)) +
+                geom_col()+
+                coord_flip()+
+                ylab("Percentual")+
+                xlab("Estados")+
+  ggtitle("Maiores exportadores de Trigo em 2019")+
+  theme(plot.title = element_text(size=13))
+
+#UFtrigo2019
+```
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, ,fig.width=13, fig.height=7}
+
+grid.arrange(UFsoja, UFfarelo, UFoleo, UFacuc, UFmilho, UFtrigo,ncol = 3)
+
+```
+
+Os graficos abaixo mostram os 5 mais importantes estados que mais exportaram, cada um dos produtos, no último ano (20019). Ao analisarmos os dados, parece não haver muitas diferenças em relação as analises anteriores. Pois os estados do Mato Grosso, Paraná e Rio Grande do Sul ainda são responsáveis pela maior exportação de Soja, Farelo de soja e Óleo de soja de todo o Brasil. Além disso, São Paulo ainda representa o maior exportador de açúcar do país, seguido do estado de Minas Gerais.
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE, ,fig.width=13, fig.height=7}
+
+grid.arrange(UFsoja2019, UFfarelo2019, UFoleo2019, UFacuc2019, UFmilho2019, UFtrigo2019,ncol = 3)
+
+
+```
+ 
+ 
+## Modelagem via análise de séries temporaris
+
+Nesta etapa foi utilizado inicialmente uma das modelagens de analise de séries temporais, os modelos [ARIMA](https://pt.wikipedia.org/wiki/ARIMA). Foi utilizado o pacote  `forecast` que tem uma variedades de ferramentas e funções implementadas que facilitam nosso trabalho. O pacote apresenta a função [`auto.arima`](https://www.rdocumentation.org/packages/forecast/versions/8.12/topics/auto.arima) que realiza todos os procedimentos necessários para ajustar um modelo ARIMA. A função realiza diversos ajustes de modelos ARIMA, testando diferentes combinações de parâmetros, e seleciona um dos modelos testados que melhor se adequar aos dados. 
+
+### Ajuste dos modelos
+
+A o período anual da série da quantidade exportada de soja, milho e farelo de soja, é de 1997 à 2019, e contém 24 observações. Foi serparado as últimas observações para verificar como o modelo ajustado faz as previsões. Após alguns ajustes, feitos com a função `auto.arima`, obtivemos as seguintes saídas de modelos:
+
+
+```{r, include=TRUE, echo=FALSE, message=FALSE, warning=FALSE,  fig.align="center"}
+
+
+dados = read.csv("dados/data_comexstat.csv")
+covariaveis = read_excel("dados/covariates.xlsx")
+
+dados$datas = dados$date 
+
+#dividindo a data em dia, mes e ano
+# funcao separate do pacote tidyr
+dados = separate(dados, date, sep ="-", into = c("Ano","Mes","dia")) 
+
+# verificando se tem valores faltantes nas covariaveis
+#colSums(is.na(covariaveis)) 
+
+# criacao da base de dados
+df_soja = dados %>%
+  filter(type == "Export" & product =="soybeans" )%>%
+  group_by(Ano)%>%
+  summarise( total = sum(tons) )
+
+df_milho = dados %>%
+  filter(type == "Export" & product =="corn" )%>%
+  group_by(Ano)%>%
+  summarise( total = sum(tons) )
+
+df_farelo = dados %>%
+  filter(type == "Export" & product =="soybean_meal" )%>%
+  group_by(Ano)%>%
+  summarise( total = sum(tons) )
+
+#adicionando as covariaveis
+df_soja = merge(covariaveis, df_soja, by.x = "year", by.y = "Ano", all.y = TRUE)
+
+df_milho = merge(covariaveis, df_milho, by.x = "year", by.y = "Ano", all.y = TRUE)
+
+df_farelo = merge(covariaveis, df_farelo, by.x = "year", by.y = "Ano", all.y = TRUE)
+
+#construindo a serie anual da quantidade exportada
+
+#soja
+s1 = df_soja%>%
+  select(year, total)%>%
+  as.data.frame()
+
+#milho
+s2 = df_milho%>%
+  select(year, total)%>%
+  as.data.frame()
+
+#farelo
+s3 = df_farelo%>%
+  select(year, total)%>%
+  as.data.frame()
+
+#series de cada produto
+s1 = ts(s1$total, start = min(s1$year), frequency = 1)
+s2 = ts(s2$total, start = min(s2$year), frequency = 1)
+s3 = ts(s3$total, start = min(s3$year), frequency = 1)
+
+
+# glinha=dados%>%
+#         ggplot(aes(x = Ano, y = PTF))+
+#           geom_line(aes(color = Paises)) +
+#           geom_point(aes(color = Paises))+
+#           xlab("Anos") +
+#           ylab("PTF")+
+#           ggtitle(paste("Série anual do PTF por país no período de", min(data$Ano), "à", max(data$Ano))) + theme(plot.title = element_text(size=13))
+# 
+# ggplotly(glinha)
+
+
+# Ajuste do modelo ARIMA
+# separando os 5 ultimos anos para verificar aqualidade do ajuste
+
+s1_treino = ts(s1[1:18], frequency = 1)
+s1_teste = ts(s1[19:23], frequency = 1)
+
+s2_treino = ts(s2[1:18], frequency = 1)
+s2_teste = ts(s2[19:23], frequency = 1)
+
+s3_treino = ts(s3[1:18], frequency = 1)
+s3_teste = ts(s3[19:23], frequency = 1)
+
+ajuste_s1 = auto.arima(y = s1_treino, max.p = 10, max.q = 10)
+#ajuste_s1_2 = Arima( y = s1_treino, order = c(1,1,0), seasonal = c(0,0,0))
+ajuste_s2 = auto.arima(y = s2_treino, max.p = 10, max.q = 10)
+#ajuste_s2_2 = Arima( y = s2_treino, order = c(1,1,0), seasonal = c(0,0,0))
+ajuste_s3 = auto.arima(y = s3_treino, max.p = 10, max.q = 10)
+#ajuste_s3_2 = Arima( y = s3_treino, order = c(1,1,0), seasonal = c(0,0,0))
+
+ajuste_s1
+ajuste_s2
+ajuste_s3
+
+prev_s1 = as.data.frame( forecast(ajuste_s1, h = 5) )
+names(prev_s1)[1] = "previsoes"
+names(prev_s1)[4] = "li95"
+names(prev_s1)[5] = "ls95"
+prev_s2 = as.data.frame( forecast(ajuste_s2, h = 5) )
+names(prev_s2)[1] = "previsoes"
+names(prev_s2)[4] = "li95"
+names(prev_s2)[5] = "ls95"
+prev_s3 = as.data.frame( forecast(ajuste_s3, h = 5) )
+names(prev_s3)[1] = "previsoes"
+names(prev_s3)[4] = "li95"
+names(prev_s3)[5] = "ls95"
+
+
+#accuracy(s1_teste, prev_s1$previsoes)
+#accuracy(s2_teste, prev_s2$previsoes)
+#accuracy(s3_teste, prev_s3$previsoes)
+```
+
+Veja que para modelar a quantidade de exportação de Soja, Milho e Farelo de Soja, obtivemos como modelo resultante um ARIMA(0,1,0). Nas figuras abaixo observamos a série anual das quatidades de exportação de cada produto. As linhas em Azul representam o ajuste do modelo ARIMA(1,0,1), as linhas em Preto são as observações, em vermlho esão as previsõe e para os próximos 5 anos. 
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+
+grafs1 = ggplot() + geom_line( data = s1, aes(y=s1, x = seq(1997,2019)) )+
+  geom_line(data = s1_treino, aes(y = ajuste_s1$fitted, x = seq(1997,2014)), col ="blue") +
+  geom_point(data = s1, aes(y = s1, x =seq(1997,2019) ))+
+  geom_line(data = prev_s1, aes(y = previsoes, x =seq(2015,2019)), col = "red") +
+  geom_ribbon(data = prev_s1, aes(y = previsoes, x =seq(2015,2019), ymin = li95, ymax = ls95), alpha=0.3)+
+  geom_vline(xintercept = 2014)+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")+
+  ggtitle("Modelagem da quantidade exportada de soja e previsões para os anos de 2015 à 2019")+ theme(plot.title = element_text(size=10))
+
+ggplotly(grafs1)
+
+
+
+```
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+grafs2 = ggplot() + geom_line( data = s2, aes(y=s2, x = seq(1997,2019)) )+
+  geom_line(data = s2_treino, aes(y = ajuste_s2$fitted, x = seq(1997,2014)), col ="blue") +
+  geom_point(data = s2, aes(y = s2, x =seq(1997,2019) ))+
+  geom_line(data = prev_s2, aes(y = previsoes, x =seq(2015,2019)), col = "red") +
+  geom_ribbon(data = prev_s2, aes(y = previsoes, x =seq(2015,2019), ymin = li95, ymax = ls95), alpha=0.3)+
+  geom_vline(xintercept = 2014)+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")+
+  ggtitle("Modelagem da quantidade exportada de Milho e previsões para os anos de 2015 à 2019")+ theme(plot.title = element_text(size=10))
+
+ggplotly(grafs2)
+
+
+```
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+grafs3 = ggplot() + geom_line( data = s3, aes(y=s3, x = seq(1997,2019)) )+
+  geom_line(data = s3_treino, aes(y = ajuste_s3$fitted, x = seq(1997,2014)), col ="blue") +
+  geom_point(data = s3, aes(y = s3, x =seq(1997,2019) ))+
+  geom_line(data = prev_s3, aes(y = previsoes, x =seq(2015,2019)), col = "red") +
+  geom_ribbon(data = prev_s3, aes(y = previsoes, x =seq(2015,2019), ymin = li95, ymax = ls95), alpha=0.3)+
+  geom_vline(xintercept = 2014)+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")+
+  ggtitle("Modelagem da quantidade exportada de Farelo de Soja e previsões para os anos de 2015 à 2019")+ theme(plot.title = element_text(size=10))
+
+ggplotly(grafs3)
+
+
+
+```
+
+## Previsões para os próximos 11 anos (2020 à 2030)
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center", warning=FALSE}
+
+#Ajustando usando toda a série
+
+modelo1=auto.arima(y = s1, max.p = 10, max.q = 10)
+modelo2=auto.arima(y = s2, max.p = 10, max.q = 10)
+modelo3=auto.arima(y = s3, max.p = 10, max.q = 10)
+
+##previsoes
+
+prev_s1 = as.data.frame( forecast(modelo1, h = 10) )
+names(prev_s1)[1] = "previsoes"
+names(prev_s1)[4] = "li95"
+names(prev_s1)[5] = "ls95"
+prev_s2 = as.data.frame( forecast(modelo2, h = 10) )
+names(prev_s2)[1] = "previsoes"
+names(prev_s2)[4] = "li95"
+names(prev_s2)[5] = "ls95"
+prev_s3 = as.data.frame( forecast(modelo3, h = 10) )
+names(prev_s3)[1] = "previsoes"
+names(prev_s3)[4] = "li95"
+names(prev_s3)[5] = "ls95"
+
+tabprev= as.data.frame(cbind(2020:2030, prev_s1$previsoes,prev_s2$previsoes,prev_s3$previsoes))
+
+names(tabprev)=c("Ano", "Soja", "Milho","Farelo de soja")
+
+knitr::kable(tabprev, caption = "Tabela de previsões da quantidade de produtos exportados em toneladas")
+
+prevsoja = autoplot(forecast(modelo1, h = 10))+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")
+
+prevsoja
+
+
+```
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+prevmilho = autoplot(forecast(modelo2, h = 10))+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")
+
+prevmilho
+
+```
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+
+prevfarelo = autoplot(forecast(modelo3, h = 10))+
+  xlab("Ano")+
+  ylab("Quantidade total em toneladas")
+
+prevfarelo
+
+
+
+
+```
+
+
+
+```{r, include=TRUE, echo=FALSE,  fig.align="center"}
+```
+ 
+ 
