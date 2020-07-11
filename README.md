@@ -1,6 +1,6 @@
 # Análise de dados econômicos e de producão
  
- ## CASO 2
+ ## CASO 1
 
 Este primeiro caso abordar a Produtividade Total dos Fatores, uma medida usada para indicar o crescimento residual da produção total de uma empresa, indústria ou economia nacional.
  
